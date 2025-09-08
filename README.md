@@ -1,10 +1,10 @@
 # Coara Pagedl
 スマホ単体で可能な限りページを保存する簡易アプリです。
 
-## 概要
+## 機能
 - javaScript有効=mht形式保存
 - javaScript無効=html形式保存
-- リソース保存(javaスクリプト有効時のみ)
+- リソース保存(jsや画像)(javaスクリプト有効時のみ)
 - PCのUser-Agentはオマケです。
 - ページの簡単なinfo.txtを保存します
 > (リソース保存について)
