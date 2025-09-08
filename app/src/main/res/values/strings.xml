@@ -1,0 +1,12 @@
+<resources>
+    <string name="url_hint">URLを入力してください</string>
+    <string name="url_icon_description">ウェブページのURLを入力</string>
+    <string name="js_toggle_label">JavaScriptを有効にする</string>
+    <string name="js_toggle_description">JavaScriptの実行を有効または無効にする</string>
+    <string name="resource_toggle_label">リソースデータを保存する</string>
+    <string name="resource_toggle_description">リソースファイルの保存を有効または無効にする</string>
+    <string name="pc_ua_toggle_label">PC User-Agentを使用する</string>
+    <string name="pc_ua_toggle_description">PC用ユーザーエージェントを使用する</string>
+    <string name="save_button_label">ページを保存</string>
+    <string name="save_button_description">ウェブページを保存する</string>
+</resources>
