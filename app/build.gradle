@@ -1,0 +1,78 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    compileSdk = 35
+    namespace = 'com.coara.pagedl'
+
+    defaultConfig {
+        minSdk = 24
+        targetSdk = 33
+        versionCode = 33
+        versionName = "2.2"
+        multiDexEnabled = true
+        proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_21
+        targetCompatibility JavaVersion.VERSION_21
+    }
+    
+    signingConfigs {
+        release {
+            storeFile file('test.jks')
+            storePassword 'test1234'
+            keyAlias 'key0'
+            keyPassword 'test1234'
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig = signingConfigs.debug
+        }
+        release {
+            minifyEnabled = true
+            shrinkResources = true
+            debuggable = false
+            signingConfig = signingConfigs.release
+        }
+    }
+
+    lint {
+        disable += ['ExpiredTargetSdkVersion', 'NewApi', 'Range', 'SetTextI18n', 'ScopedStorage', 'FieldCanBeLocal', 'GradleDependency']
+    }
+    packagingOptions {
+        excludes += "DebugProbesKt.bin"
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs += ["-Xlint:deprecation", "-Xlint:unchecked"]
+}
+
+dependencies {
+    implementation 'androidx.webkit:webkit:1.14.0'
+    implementation 'androidx.core:core:1.2.0'
+    implementation 'androidx.startup:startup-runtime:1.2.0'
+    implementation 'androidx.profileinstaller:profileinstaller:1.4.1'
+    implementation "androidx.emoji2:emoji2:1.5.0"
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'com.google.android.material:material:1.12.0'
+    implementation 'androidx.activity:activity:1.10.1'
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
