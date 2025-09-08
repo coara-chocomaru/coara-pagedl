@@ -1,16 +1,17 @@
-# Set Appops 
-
-su環境であればアプリ一個でappopsが出来ます。
+# Coara Pagedl
+スマホ単体で可能な限りページを保存する簡易アプリです。
 
 ## 概要
-
-- ログを保存(/Android/data/com/coara/setops/files/command_logs/に保存されます。)
-- appopsで一括でインストール許可
-
-> [ネタバレ…😓]
-> assetsの中のバイナリをシェルから使えばsuは不要です()
-
-> suでappopsを設定するのが面倒な方向けです。
+- javaスクリプト有効=mht形式保存
+- javaスクリプト無効=html形式保存
+- リソース保存(javaスクリプト有効時のみ)
+- PCのUser-Agentはオマケです。
+- ページの簡単なinfo.txtを保存します
+> (リソース保存について)
+> ページによっては処理が長い or 大容量なので
+> 状況に合わせて通知欄から終了してください。
+>
+> ダウンロードに失敗するとバグ回避の為アプリを終了します。
 
 ## ライセンス
 Apache License, Version 2.0
