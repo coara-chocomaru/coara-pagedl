@@ -81,10 +81,10 @@ public class pagedl extends AppCompatActivity {
     private static final String ACCEPT_HEADER = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
     private static final String ACCEPT_LANGUAGE = "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7";
     private static final int CONNECT_TIMEOUT_MS = 15000;
-    private static final int READ_TIMEOUT_MS = 30000; 
+    private static final int READ_TIMEOUT_MS = 30000;
     private static final int BUFFER_SIZE = 16384;
     private static final int REQUEST_CODE_POST_NOTIFICATIONS = 1;
-    private static final long LOAD_WAIT_MS = 10000; 
+    private static final long LOAD_WAIT_MS = 10000;
     private EditText urlInput;
     private Switch jsSwitch;
     private Switch resourceSwitch;
@@ -92,34 +92,64 @@ public class pagedl extends AppCompatActivity {
     private Button saveButton;
     private WebView webView;
     private ProgressDialog progressDialog;
+
     public static final String ACTION_DOWNLOAD_STARTED = "com.coara.pagedl.ACTION_DOWNLOAD_STARTED";
     public static final String ACTION_DOWNLOAD_PROGRESS = "com.coara.pagedl.ACTION_DOWNLOAD_PROGRESS";
     public static final String ACTION_DOWNLOAD_COMPLETE = "com.coara.pagedl.ACTION_DOWNLOAD_COMPLETE";
     public static final String ACTION_DOWNLOAD_ERROR = "com.coara.pagedl.ACTION_DOWNLOAD_ERROR";
-    private Set<String> loadedResources = new HashSet<>(); 
+
+    public static final String EXTRA_SESSION_ID = "extra_session_id";
+
+    private Set<String> loadedResources = new HashSet<>();
     private volatile AtomicBoolean isSaving = new AtomicBoolean(false);
     private Handler handler = new Handler(Looper.getMainLooper());
+
+    private long currentSessionId = -1L;
 
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
             final String action = intent.getAction();
             if (ACTION_DOWNLOAD_PROGRESS.equals(action)) {
-                final String msg = intent.getStringExtra("message");
-                if (msg != null) {
-                    progressDialog.setMessage(msg);
+                long sessionId = intent.getLongExtra(EXTRA_SESSION_ID, -1L);
+                if (sessionId != currentSessionId) {
+                    return;
                 }
+
+                final String msg = intent.getStringExtra("message");
+                final boolean isResourceProgress = intent.getBooleanExtra("resource_progress", false);
+
+                handler.post(() -> {
+                    if (progressDialog == null) return;
+                    if (msg == null) return;
+
+                    boolean resourceSwitchChecked = (resourceSwitch != null && resourceSwitch.isChecked());
+                    boolean resourceSwitchEnabled = (resourceSwitch != null && resourceSwitch.isEnabled());
+
+                    if (isResourceProgress && (!resourceSwitchChecked || !resourceSwitchEnabled)) {
+                        progressDialog.setMessage("ダウンロード中です…");
+                    } else {
+                        progressDialog.setMessage(msg);
+                    }
+                });
+
             } else if (ACTION_DOWNLOAD_COMPLETE.equals(action)) {
+                long sessionId = intent.getLongExtra(EXTRA_SESSION_ID, -1L);
+                if (sessionId != currentSessionId) return;
+
                 final String path = intent.getStringExtra("outputPath");
                 runOnUiThread(() -> {
-                    progressDialog.dismiss();
+                    if (progressDialog != null && progressDialog.isShowing()) progressDialog.dismiss();
                     Toast.makeText(pagedl.this, "保存完了：\n" + path, Toast.LENGTH_LONG).show();
                     clearCacheAndCookies();
                 });
             } else if (ACTION_DOWNLOAD_ERROR.equals(action)) {
+                long sessionId = intent.getLongExtra(EXTRA_SESSION_ID, -1L);
+                if (sessionId != currentSessionId) return;
+
                 final String err = intent.getStringExtra("error");
                 runOnUiThread(() -> {
-                    progressDialog.dismiss();
+                    if (progressDialog != null && progressDialog.isShowing()) progressDialog.dismiss();
                     showCancellationNotification(err);
                     handler.postDelayed(() -> {
                         finishAffinity();
@@ -147,7 +177,7 @@ public class pagedl extends AppCompatActivity {
             .setSmallIcon(android.R.drawable.stat_sys_warning)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
-        .setTimeoutAfter(1900L);
+            .setTimeoutAfter(1900L);
         final NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm != null) {
             nm.notify(0x1454, nb.build());
@@ -179,16 +209,31 @@ public class pagedl extends AppCompatActivity {
         webSettings.setBlockNetworkLoads(false);
         webSettings.setSupportMultipleWindows(true);
         webSettings.setJavaScriptCanOpenWindowsAutomatically(true);
-        webSettings.setMediaPlaybackRequiresUserGesture(false);      
+        webSettings.setMediaPlaybackRequiresUserGesture(false);
         updateUserAgent(webSettings);
 
-        jsSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> webSettings.setJavaScriptEnabled(isChecked));
+        jsSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            webSettings.setJavaScriptEnabled(isChecked);
+            boolean hasStorage = getAvailableStorage() >= MIN_STORAGE_THRESHOLD;
+            resourceSwitch.setEnabled(isChecked && hasStorage);
+            if (!isChecked && resourceSwitch.isChecked()) {
+                resourceSwitch.setChecked(false);
+            }
+        });
+
         pcUaSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> updateUserAgent(webSettings));
 
         resourceSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> {
-            if (isChecked && getAvailableStorage() < MIN_STORAGE_THRESHOLD) {
-                resourceSwitch.setChecked(false);
-                Toast.makeText(this, "ストレージ容量が512MB未満のため、リソース保存を無効にします", Toast.LENGTH_LONG).show();
+            if (isChecked) {
+                if (!jsSwitch.isChecked()) {
+                    resourceSwitch.setChecked(false);
+                    Toast.makeText(this, "JavaScriptが無効なため、リソース保存は利用できません", Toast.LENGTH_LONG).show();
+                    return;
+                }
+                if (getAvailableStorage() < MIN_STORAGE_THRESHOLD) {
+                    resourceSwitch.setChecked(false);
+                    Toast.makeText(this, "ストレージ容量が512MB未満のため、リソース保存を無効にします", Toast.LENGTH_LONG).show();
+                }
             }
         });
 
@@ -234,16 +279,20 @@ public class pagedl extends AppCompatActivity {
             unregisterReceiver(receiver);
         } catch (final Exception ignored) {
         }
-        if (progressDialog.isShowing()) {
+        if (progressDialog != null && progressDialog.isShowing()) {
             progressDialog.dismiss();
         }
         webView.destroy();
     }
 
     private void checkStorageAndUpdateUI() {
-        if (getAvailableStorage() < MIN_STORAGE_THRESHOLD) {
+        boolean hasStorage = getAvailableStorage() >= MIN_STORAGE_THRESHOLD;
+        if (!hasStorage) {
             resourceSwitch.setEnabled(false);
+            if (resourceSwitch.isChecked()) resourceSwitch.setChecked(false);
             Toast.makeText(this, "ストレージ容量が512MB未満のため、リソース保存を無効にします", Toast.LENGTH_LONG).show();
+        } else {
+            resourceSwitch.setEnabled(jsSwitch.isChecked());
         }
     }
 
@@ -261,6 +310,8 @@ public class pagedl extends AppCompatActivity {
     }
 
     private void handleSaveButtonClick() {
+        checkStorageAndUpdateUI();
+
         if (!isSaving.compareAndSet(false, true)) {
             Toast.makeText(this, "現在保存処理中です", Toast.LENGTH_SHORT).show();
             return;
@@ -278,12 +329,16 @@ public class pagedl extends AppCompatActivity {
             return;
         }
 
+        currentSessionId = System.currentTimeMillis();
+
         final String siteName = urlString.replaceAll("[^a-zA-Z0-9]", "_");
+
+        progressDialog.setMessage("ダウンロード中です…");
         progressDialog.show();
 
         final File outputDir = createOutputDirectory(siteName);
         if (outputDir == null) {
-            progressDialog.dismiss();
+            if (progressDialog.isShowing()) progressDialog.dismiss();
             isSaving.set(false);
             return;
         }
@@ -313,14 +368,14 @@ public class pagedl extends AppCompatActivity {
 
                     if (!saveResources && !jsEnabled) {
                         runOnUiThread(() -> {
-                            progressDialog.dismiss();
+                            if (progressDialog != null && progressDialog.isShowing()) progressDialog.dismiss();
                             Toast.makeText(pagedl.this, "保存完了：\n" + htmlFile.getAbsolutePath(), Toast.LENGTH_LONG).show();
                             clearCacheAndCookies();
                         });
                     }
                 } catch (final Exception e) {
                     runOnUiThread(() -> {
-                        progressDialog.dismiss();
+                        if (progressDialog != null && progressDialog.isShowing()) progressDialog.dismiss();
                         Toast.makeText(pagedl.this, "HTML保存エラー: " + e.getMessage(), Toast.LENGTH_LONG).show();
                     });
                 } finally {
@@ -361,9 +416,9 @@ public class pagedl extends AppCompatActivity {
                     + "      window.onGrokIdle = true;"
                     + "    }"
                     + "  }, 1000);"
-                    + "  document.addEventListener('mousemove', () => idleTime = 0);"
-                    + "  document.addEventListener('keypress', () => idleTime = 0);"
-                    + "  document.addEventListener('scroll', () => idleTime = 0);"
+                    + "  document.addEventListener('mousemove', function(){ idleTime = 0; });"
+                    + "  document.addEventListener('keypress', function(){ idleTime = 0; });"
+                    + "  document.addEventListener('scroll', function(){ idleTime = 0; });"
                     + "  if (document.readyState === 'complete') {"
                     + "    idleTime = 4;"
                     + "  }"
@@ -419,7 +474,7 @@ public class pagedl extends AppCompatActivity {
                             Log.w(TAG, "Failed to parse CSS URLs", e);
                         }
                     }
-    
+
                     String domResourceScript = "(function() {"
                             + "  var resources = [];"
                             + "  var selectors = 'img,script,link,style,video,audio,source,iframe,object,embed,param';"
@@ -437,7 +492,6 @@ public class pagedl extends AppCompatActivity {
                             + "      if (urlMatch) resources.push(urlMatch[1]);"
                             + "    }"
                             + "  }"
-                            + "  // Also extract from inline scripts and styles"
                             + "  var scripts = document.querySelectorAll('script');"
                             + "  for (var k = 0; k < scripts.length; k++) {"
                             + "    var scriptContent = scripts[k].innerHTML;"
@@ -465,13 +519,13 @@ public class pagedl extends AppCompatActivity {
                                     Log.w(TAG, "Failed to parse DOM resources", e);
                                 }
                             }
-                    
+
                             webView.saveWebArchive(archivePath, false, archiveValue -> {
                                 if (archiveValue == null) {
-                                    
                                     captureManualHtml(urlString, outputDir);
                                     return;
                                 }
+
                                 final boolean saveResources = resourceSwitch.isChecked();
                                 if (saveResources) {
                                     final Intent svc = new Intent(pagedl.this, DownloadService.class);
@@ -484,6 +538,7 @@ public class pagedl extends AppCompatActivity {
                                     svc.putExtra(DownloadService.EXTRA_REFERER, urlString);
                                     svc.putExtra(DownloadService.EXTRA_JS_ENABLED, jsSwitch.isChecked());
                                     svc.putStringArrayListExtra(DownloadService.EXTRA_LOADED_RESOURCES, new ArrayList<>(loadedResources));
+                                    svc.putExtra(EXTRA_SESSION_ID, currentSessionId);
                                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                                         startForegroundService(svc);
                                     } else {
@@ -491,7 +546,7 @@ public class pagedl extends AppCompatActivity {
                                     }
                                 } else {
                                     runOnUiThread(() -> {
-                                        progressDialog.dismiss();
+                                        if (progressDialog != null && progressDialog.isShowing()) progressDialog.dismiss();
                                         Toast.makeText(pagedl.this, "保存完了：\n" + archiveValue, Toast.LENGTH_LONG).show();
                                         clearCacheAndCookies();
                                     });
@@ -503,7 +558,7 @@ public class pagedl extends AppCompatActivity {
                 }
             });
         } catch (final Exception e) {
-            progressDialog.dismiss();
+            if (progressDialog != null && progressDialog.isShowing()) progressDialog.dismiss();
             Toast.makeText(this, "初期化エラー: " + e.getMessage(), Toast.LENGTH_LONG).show();
             isSaving.set(false);
         }
@@ -514,11 +569,11 @@ public class pagedl extends AppCompatActivity {
             @Override
             public void onReceiveValue(String html) {
                 if (html != null && !"null".equals(html)) {
-                    html = html.replaceAll("^\"|\"$", ""); 
+                    html = html.replaceAll("^\"|\"$", "");
                     File htmlFile = new File(outputDir, "page_manual.html");
                     try {
                         Utils.writeStringToFile(htmlFile, html);
-                        
+
                         final Intent svc = new Intent(pagedl.this, DownloadService.class);
                         svc.putExtra(DownloadService.EXTRA_ARCHIVE_PATH, (String) null);
                         svc.putExtra(DownloadService.EXTRA_HTML_PATH, htmlFile.getAbsolutePath());
@@ -529,21 +584,28 @@ public class pagedl extends AppCompatActivity {
                         svc.putExtra(DownloadService.EXTRA_REFERER, urlString);
                         svc.putExtra(DownloadService.EXTRA_JS_ENABLED, jsSwitch.isChecked());
                         svc.putStringArrayListExtra(DownloadService.EXTRA_LOADED_RESOURCES, new ArrayList<>(loadedResources));
+                        svc.putExtra(EXTRA_SESSION_ID, currentSessionId);
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                             startForegroundService(svc);
                         } else {
                             startService(svc);
                         }
+
+                        if (!resourceSwitch.isChecked()) {
+                            handler.post(() -> {
+                                if (progressDialog != null) progressDialog.setMessage("ダウンロード中です…");
+                            });
+                        }
                     } catch (IOException e) {
                         Log.e(TAG, "Manual HTML save failed", e);
                         runOnUiThread(() -> {
-                            progressDialog.dismiss();
+                            if (progressDialog != null && progressDialog.isShowing()) progressDialog.dismiss();
                             Toast.makeText(pagedl.this, "Manual HTML 保存失敗", Toast.LENGTH_LONG).show();
                         });
                     }
                 } else {
                     runOnUiThread(() -> {
-                        progressDialog.dismiss();
+                        if (progressDialog != null && progressDialog.isShowing()) progressDialog.dismiss();
                         Toast.makeText(pagedl.this, "HTML キャプチャ失敗", Toast.LENGTH_LONG).show();
                     });
                 }
@@ -652,13 +714,13 @@ public class pagedl extends AppCompatActivity {
                 fos.write(data);
             }
             runOnUiThread(() -> {
-                progressDialog.dismiss();
+                if (progressDialog != null && progressDialog.isShowing()) progressDialog.dismiss();
                 Toast.makeText(pagedl.this, "保存完了：\n" + outFile.getAbsolutePath(), Toast.LENGTH_LONG).show();
                 clearCacheAndCookies();
             });
         } catch (final Exception e) {
             runOnUiThread(() -> {
-                progressDialog.dismiss();
+                if (progressDialog != null && progressDialog.isShowing()) progressDialog.dismiss();
                 Toast.makeText(pagedl.this, "Data URL 保存エラー: " + e.getMessage(), Toast.LENGTH_LONG).show();
             });
         } finally {
@@ -723,6 +785,7 @@ public class pagedl extends AppCompatActivity {
 
         private boolean pcUa;
         private String referer;
+        private long serviceSessionId = -1L;
 
         @Override
         public void onCreate() {
@@ -769,6 +832,8 @@ public class pagedl extends AppCompatActivity {
             this.referer = intent.getStringExtra(EXTRA_REFERER);
             final ArrayList<String> loadedResourcesList = intent.getStringArrayListExtra(EXTRA_LOADED_RESOURCES);
 
+            serviceSessionId = intent.getLongExtra(EXTRA_SESSION_ID, -1L);
+
             final File outDirFile = new File(outputDir != null ? outputDir : getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) + "/page/default");
             final Intent stopIntent = new Intent(this, DownloadService.class);
             stopIntent.setAction(ACTION_STOP);
@@ -788,13 +853,13 @@ public class pagedl extends AppCompatActivity {
 
             currentTask = executor.submit(() -> {
                 try {
-                    sendProgress("処理開始...");
+                    sendProgress("処理開始...", false);
                     String mainHtmlNoJs = null;
                     String mainHtmlJs = null;
                     final Set<String> allResources = new HashSet<>();
 
                     if (archivePath != null) {
-                        sendProgress("アーカイブを抽出中...");
+                        sendProgress("アーカイブを抽出中...", false);
                         final File archiveFile = new File(archivePath);
                         mainHtmlJs = MimeParser.getMainHtml(Utils.readFileToString(archiveFile));
                         if (mainHtmlJs.isEmpty()) {
@@ -808,7 +873,6 @@ public class pagedl extends AppCompatActivity {
 
                     if (htmlPath != null) {
                         mainHtmlNoJs = Utils.readFileToString(new File(htmlPath));
-
                         allResources.addAll(Utils.extractResources(mainHtmlNoJs, baseUrl));
                     }
 
@@ -817,17 +881,17 @@ public class pagedl extends AppCompatActivity {
                     }
 
                     if (saveResources && !stopped.get()) {
-                        sendProgress("リソース抽出・ダウンロード中...");
+                        sendProgress("リソース抽出・ダウンロード中...", true);
                         Set<String> additional = recursiveExtractFromResources(allResources, baseUrl, new HashSet<>());
                         allResources.addAll(additional);
-                        
+
                         Set<String> resolvedResources = new HashSet<>();
                         for (String res : allResources) {
                             try {
                                 URL resolved = new URL(new URL(baseUrl), res);
                                 resolvedResources.add(resolved.toString());
                             } catch (Exception e) {
-                                
+
                             }
                         }
                         saveResourcesToFolderFromSet(resolvedResources, outDirFile, baseUrl);
@@ -867,7 +931,7 @@ public class pagedl extends AppCompatActivity {
                 executor.shutdownNow();
             }
             try {
-                if (!executor.awaitTermination(5, TimeUnit.SECONDS)) { 
+                if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
                     Log.w(TAG, "Executor did not terminate in time");
                 }
             } catch (final InterruptedException ignored) {
@@ -889,13 +953,16 @@ public class pagedl extends AppCompatActivity {
             }
         }
 
-        private void sendProgress(final String message) {
+        private void sendProgress(final String message, final boolean isResourceProgress) {
             if (stopped.get()) {
                 return;
             }
             final Intent i = new Intent(ACTION_DOWNLOAD_PROGRESS);
             i.putExtra("message", message);
+            i.putExtra("resource_progress", isResourceProgress);
+            i.putExtra(EXTRA_SESSION_ID, serviceSessionId);
             sendBroadcast(i);
+
             final Intent stopIntent = new Intent(this, DownloadService.class);
             stopIntent.setAction(ACTION_STOP);
             final int pendingFlags = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_IMMUTABLE : PendingIntent.FLAG_UPDATE_CURRENT;
@@ -917,6 +984,7 @@ public class pagedl extends AppCompatActivity {
         private void sendComplete(final String path) {
             final Intent i = new Intent(ACTION_DOWNLOAD_COMPLETE);
             i.putExtra("outputPath", path);
+            i.putExtra(EXTRA_SESSION_ID, serviceSessionId);
             sendBroadcast(i);
             final NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
             if (nm != null) {
@@ -927,6 +995,7 @@ public class pagedl extends AppCompatActivity {
         private void sendError(final String err) {
             final Intent i = new Intent(ACTION_DOWNLOAD_ERROR);
             i.putExtra("error", err);
+            i.putExtra(EXTRA_SESSION_ID, serviceSessionId);
             sendBroadcast(i);
             final NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
             if (nm != null) {
@@ -1007,7 +1076,8 @@ public class pagedl extends AppCompatActivity {
                 sendError("リソースフォルダ作成失敗");
                 return;
             }
-            sendProgress("リソース保存中です");
+            sendProgress("リソース保存中です", true);
+
             final Map<String, Integer> fileNameCounts = new HashMap<>();
             ArrayList<Future<?>> downloadFutures = new ArrayList<>();
             for (final String resUrl : resources) {
@@ -1045,7 +1115,7 @@ public class pagedl extends AppCompatActivity {
                 });
                 downloadFutures.add(future);
             }
-        
+
             for (Future<?> future : downloadFutures) {
                 try {
                     future.get();
@@ -1141,11 +1211,11 @@ public class pagedl extends AppCompatActivity {
                             throw new ClosedByInterruptException();
                         }
                         totalBytes += bytesRead;
-                        if (totalBytes > MIN_STORAGE_THRESHOLD / 2) { 
+                        if (totalBytes > MIN_STORAGE_THRESHOLD / 2) {
                             if (!checkStorage()) {
                                 throw new IOException("ストレージ容量不足");
                             }
-                            totalBytes = 0; 
+                            totalBytes = 0;
                         }
                         out.write(buffer, 0, bytesRead);
                     }
