@@ -33,6 +33,7 @@ import android.widget.EditText;
 import android.widget.Switch;
 import android.widget.Toast;
 
+import androidx.activity.OnBackPressedCallback;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
@@ -62,14 +63,11 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -260,6 +258,18 @@ public class pagedl extends AppCompatActivity {
         filter.addAction(ACTION_DOWNLOAD_COMPLETE);
         filter.addAction(ACTION_DOWNLOAD_ERROR);
         registerReceiver(receiver, filter);
+
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                if (isSaving.get()) {
+                    Toast.makeText(pagedl.this, "保存中はバックキーが無効です", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                setEnabled(false);
+                getOnBackPressedDispatcher().onBackPressed();
+            }
+        });
 
         checkNotificationPermission();
     }
@@ -840,15 +850,6 @@ public class pagedl extends AppCompatActivity {
         });
     }
 
-    @Override
-    public void onBackPressed() {
-        if (isSaving.get()) {
-            Toast.makeText(this, "保存中はバックキーが無効です", Toast.LENGTH_SHORT).show();
-        } else {
-            super.onBackPressed();
-        }
-    }
-
     public static class DownloadService extends Service {
         public static final String EXTRA_ARCHIVE_PATH = "extra_archive_path";
         public static final String EXTRA_HTML_PATH = "extra_html_path";
@@ -902,7 +903,11 @@ public class pagedl extends AppCompatActivity {
                 if (nm != null) {
                     nm.cancel(NOTIF_ID);
                 }
-                stopForeground(true);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    stopForeground(Service.STOP_FOREGROUND_REMOVE);
+                } else {
+                    stopForeground(true);
+                }
                 executor.shutdownNow();
                 sendError("処理がキャンセルされました\nアプリを終了します。");
                 stopSelf();
@@ -1023,7 +1028,11 @@ public class pagedl extends AppCompatActivity {
                     if (nm != null) {
                         nm.cancel(NOTIF_ID);
                     }
-                    stopForeground(true);
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                        stopForeground(Service.STOP_FOREGROUND_REMOVE);
+                    } else {
+                        stopForeground(true);
+                    }
                     executor.shutdownNow();
                     stopSelf();
                 }
@@ -1155,7 +1164,11 @@ public class pagedl extends AppCompatActivity {
             if (nm != null) {
                 nm.cancel(NOTIF_ID);
             }
-            stopForeground(true);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(Service.STOP_FOREGROUND_REMOVE);
+            } else {
+                stopForeground(true);
+            }
             executor.shutdownNow();
             stopSelf();
         }
@@ -2379,6 +2392,52 @@ public class pagedl extends AppCompatActivity {
                     + "  }"
                     + "  return JSON.stringify(out);"
                     + "})()";
+        }
+
+        public static String decodeQuotedPrintable(final String input) {
+            if (input == null) return "";
+            StringBuilder sb = new StringBuilder(input.length());
+            int i = 0;
+            int len = input.length();
+            while (i < len) {
+                char c = input.charAt(i);
+                if (c == '=' && i + 2 < len) {
+                    char n1 = input.charAt(i + 1);
+                    char n2 = input.charAt(i + 2);
+                    if (n1 == '\r' && n2 == '\n') {
+                        i += 3;
+                        continue;
+                    }
+                    if (n1 == '\n') {
+                        i += 2;
+                        continue;
+                    }
+                    if (n1 == '\r') {
+                        i += 2;
+                        continue;
+                    }
+                    int hi = hexValue(n1);
+                    int lo = hexValue(n2);
+                    if (hi >= 0 && lo >= 0) {
+                        sb.append((char) ((hi << 4) | lo));
+                        i += 3;
+                        continue;
+                    }
+                    sb.append(c);
+                    i++;
+                } else {
+                    sb.append(c);
+                    i++;
+                }
+            }
+            return sb.toString();
+        }
+
+        private static int hexValue(char c) {
+            if (c >= '0' && c <= '9') return c - '0';
+            if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+            if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+            return -1;
         }
     }
 
