@@ -208,7 +208,6 @@ public class pagedl extends AppCompatActivity {
         final WebSettings webSettings = webView.getSettings();
         webSettings.setJavaScriptEnabled(jsSwitch.isChecked());
         webSettings.setDomStorageEnabled(true);
-        webSettings.setDatabaseEnabled(true);
         webSettings.setAllowFileAccess(true);
         webSettings.setAllowContentAccess(true);
         webSettings.setLoadsImagesAutomatically(true);
@@ -1704,7 +1703,6 @@ public class pagedl extends AppCompatActivity {
                 case "mjs":
                 case "cjs":
                 case "jsx":
-                case "ts":
                 case "tsx":
                 case "css":
                 case "scss":
